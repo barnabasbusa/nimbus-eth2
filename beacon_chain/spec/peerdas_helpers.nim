@@ -290,11 +290,30 @@ func get_extended_sample_count*(samples_per_slot: int,
 
   NUMBER_OF_COLUMNS
 
+# https://github.com/ethereum/consensus-specs/blob/v1.6.0-alpha.3/specs/fulu/p2p-interface.md#verify_data_column_sidecar
+func verify_data_column_sidecar*(sidecar: DataColumnSidecar): bool =
+  ## Verify if the data column sidecar is valid.
+
+  # The sidecar index must be within the valid range
+  if sidecar.index >= NUMBER_OF_COLUMNS:
+    return false
+
+  # A sidecar for zero blobs is invalid
+  if len(sidecar.kzg_commitments) == 0:
+    return false
+
+  # The column length must be equal to the number of commitments/proofs
+  if len(sidecar.column) != len(sidecar.kzg_commitments) or len(sidecar.column) != len(
+    sidecar.kzg_proofs
+  ):
+    return false
+
+  true
+
 # https://github.com/ethereum/consensus-specs/blob/v1.5.0-alpha.10/specs/fulu/p2p-interface.md#verify_data_column_sidecar_inclusion_proof
 proc verify_data_column_sidecar_inclusion_proof*(sidecar: DataColumnSidecar):
                                                  Result[void, cstring] =
-  ## Verify if the given KZG Commitments are in included
-  ## in the beacon block or not
+  ## Verify if the given KZG commitments included in the given beacon block.
   let gindex =
     KZG_COMMITMENTS_INCLUSION_PROOF_DEPTH_GINDEX.GeneralizedIndex
   if not is_valid_merkle_branch(
@@ -311,8 +330,7 @@ proc verify_data_column_sidecar_inclusion_proof*(sidecar: DataColumnSidecar):
 # https://github.com/ethereum/consensus-specs/blob/v1.5.0-alpha.10/specs/fulu/p2p-interface.md#verify_data_column_sidecar_kzg_proofs
 proc verify_data_column_sidecar_kzg_proofs*(sidecar: DataColumnSidecar):
                                             Result[void, cstring] =
-  ## Verify if the KZG Proofs consisting in the `DataColumnSidecar`
-  ## is valid or not.
+  ## Verify if the KZG proofs are correct.
 
   # Check if the data column sidecar index < NUMBER_OF_COLUMNS
   if not (sidecar.index < NUMBER_OF_COLUMNS):
@@ -327,10 +345,9 @@ proc verify_data_column_sidecar_kzg_proofs*(sidecar: DataColumnSidecar):
     return err("Sidecar kzg_commitments length is not equal to the kzg_proofs length")
 
   # Iterate through the cell indices
-  var cellIndices =
-    newSeq[CellIndex](MAX_BLOB_COMMITMENTS_PER_BLOCK)
+  var cellIndices = newSeqOfCap[CellIndex](sidecar.column.len)
   for _ in 0..<sidecar.column.len:
-    cellIndices.add(sidecar.index * sidecar.column.lenu64)
+    cellIndices.add(CellIndex(sidecar.index))
 
   let res =
     verifyCellKzgProofBatch(sidecar.kzg_commitments.asSeq,
