@@ -827,20 +827,99 @@ func init*(T: type GraffitiBytes, input: string): GraffitiBytes
       raise newException(ValueError, "The graffiti value should be 32 characters or less")
     distinctBase(result)[0 ..< input.len] = toBytes(input)
 
+func encodeClientVersion(clientName, commitHash: string): string =
+  ## Encode client code and commit hash for graffiti
+  ## Returns format: CLIENTCODExxxxxx where xxxxxx is first 4 hex chars of commit
+
+  # Map client names to their standard codes
+  # Based on https://hackmd.io/@wmoBhF17RAOH2NZ5bNXJVg/BJX2c9gja
+  let clientCode =
+    if "geth" in clientName.toLowerAscii: "GE"
+    elif "besu" in clientName.toLowerAscii: "BU"
+    elif "nethermind" in clientName.toLowerAscii: "NM"
+    elif "erigon" in clientName.toLowerAscii: "EG"
+    elif "reth" in clientName.toLowerAscii: "RE"
+    elif "nimbus" in clientName.toLowerAscii: "NB"
+    elif "lighthouse" in clientName.toLowerAscii: "LH"
+    elif "prysm" in clientName.toLowerAscii: "PM"
+    elif "teku" in clientName.toLowerAscii: "TK"
+    elif "lodestar" in clientName.toLowerAscii: "LS"
+    else: "XX"  # Unknown client
+
+  # Extract first 4 hex characters of commit (representing 2 bytes)
+  let commitShort =
+    if commitHash.len >= 4:
+      commitHash[0..3]
+    else:
+      commitHash & "0".repeat(4 - commitHash.len)
+
+  clientCode & commitShort
+
+func parseClientVersion(versionStr: string): string =
+  ## Parse EL client version string and encode it for graffiti
+  ## Example input: "geth/v1.13.0-stable-3f907d6a/linux-amd64/go1.21.6"
+  ## Example output: "GE3f90"
+
+  let parts = versionStr.split('/')
+  if parts.len == 0:
+    return ""
+
+  let clientName = parts[0]
+
+  # Try to extract commit hash from various positions
+  var commitHash = ""
+  for i in 1..<parts.len:
+    let part = parts[i]
+    # Look for patterns like "stable-HASH" or "unstable-HASH"
+    if "-" in part:
+      let subparts = part.split('-')
+      for j in 1..<subparts.len:
+        if subparts[j].len >= 4:
+          # Check if it looks like a hex commit hash
+          var isHex = true
+          for c in subparts[j][0..min(7, subparts[j].len-1)]:
+            if c notin HexDigits:
+              isHex = false
+              break
+          if isHex:
+            commitHash = subparts[j]
+            break
+    if commitHash.len > 0:
+      break
+
+  if commitHash.len == 0:
+    commitHash = "0000"
+
+  encodeClientVersion(clientName, commitHash)
+
 func defaultGraffitiBytes*(): GraffitiBytes =
   # Encode client version in graffiti following the standard from:
   # https://hackmd.io/@wmoBhF17RAOH2NZ5bNXJVg/BJX2c9gja
-  # Format: CLcode|2bytecommit (we don't include EL since Nimbus is CL-only)
-  # Example: NB1be5 (NB = Nimbus, 1be5 = first 4 hex chars of git commit)
+  # Format: ELcode|2bytecommit|CLcode|2bytecommit
+  # This provides just the CL portion; EL portion is added at runtime
   const
-    clientCode = "NB"  # Nimbus consensus layer code
+    clCode = "NB"  # Nimbus consensus layer code
     # Extract first 4 hex characters of git revision (2 bytes)
-    commitShort = gitRevision[0..3]
-    versionGraffiti = clientCode & commitShort
-    # Append remaining space with readable version info
-    fullGraffiti = versionGraffiti & " " & "Nimbus/" & fullVersionStr
-    graffitiBytes = toBytes(fullGraffiti)
+    clCommit = gitRevision[0..3]
+    # Format: CLcode + commit (EL part added at runtime via getGraffitiBytes)
+    graffitiStr = clCode & clCommit
+    graffitiBytes = toBytes(graffitiStr)
   static: doAssert graffitiBytes.len <= MAX_GRAFFITI_SIZE
+  distinctBase(result)[0 ..< graffitiBytes.len] = graffitiBytes
+
+func makeGraffitiBytes*(elVersion: string): GraffitiBytes =
+  ## Create graffiti with both EL and CL version info
+  ## Format: ELcode|2bytecommit|CLcode|2bytecommit
+  let
+    elEncoded = parseClientVersion(elVersion)
+    clEncoded = encodeClientVersion("nimbus", gitRevision)
+    combined = elEncoded & clEncoded
+    graffitiBytes = toBytes(combined)
+
+  if graffitiBytes.len > MAX_GRAFFITI_SIZE:
+    # Fallback to just CL version if combined is too long
+    return defaultGraffitiBytes()
+
   distinctBase(result)[0 ..< graffitiBytes.len] = graffitiBytes
 
 proc writeValue*(

@@ -85,6 +85,10 @@ type
     checkChainIdLoopFut: Future[void]
     nextExpectedPayloadParams: Opt[NextExpectedPayloadParams]
 
+    clientVersion: Opt[string]
+      ## Cached EL client version string (e.g., "geth/v1.13.0-stable-...")
+      ## Used for graffiti encoding
+
   ChainIdStatus {.pure.} = enum
     notExchangedYet
     mismatch
@@ -1217,6 +1221,27 @@ func hasConnection*(m: ELManager): bool =
 func hasAnyWorkingConnection*(m: ELManager): bool =
   m.elConnections.anyIt(it.state == Working or it.state == NeverTested)
 
+proc fetchClientVersion(m: ELManager) {.async: (raises: [CancelledError]).} =
+  ## Fetch and cache the EL client version for graffiti encoding
+  if m.clientVersion.isSome:
+    return  # Already cached
+
+  for connection in m.elConnections:
+    if connection.web3.isSome:
+      try:
+        let web3 = connection.web3.get
+        let version = await web3.provider.web3_clientVersion()
+        m.clientVersion = Opt.some(version)
+        debug "Fetched EL client version", version
+        return
+      except CatchableError as exc:
+        debug "Failed to fetch client version from EL", err = exc.msg
+        continue
+
+func getClientVersion*(m: ELManager): Opt[string] =
+  ## Get the cached EL client version
+  m.clientVersion
+
 proc startCheckChainIdLoop(
     m: ELManager
 ) {.async: (raises: [CancelledError]).} =
@@ -1232,6 +1257,9 @@ proc start*(m: ELManager, syncChain = true) {.gcsafe.} =
 
   if m.hasJwtSecret and m.checkChainIdLoopFut.isNil:
     m.checkChainIdLoopFut = m.startCheckChainIdLoop()
+
+  # Fetch client version for graffiti in the background
+  asyncSpawn m.fetchClientVersion()
 
 func `$`(x: Quantity): string =
   $(x.uint64)

@@ -209,8 +209,22 @@ proc getValidatorForDuties*(
 
 proc getGraffitiBytes*(
     node: BeaconNode, validator: AttachedValidator): GraffitiBytes =
-  getGraffiti(node.config.validatorsDir, node.config.defaultGraffitiBytes(),
-              validator.pubkey)
+  # Get user-configured graffiti first
+  let userGraffiti = getGraffiti(
+    node.config.validatorsDir, node.config.defaultGraffitiBytes(),
+    validator.pubkey)
+
+  # If user has custom graffiti (different from default), use it as-is
+  if userGraffiti != node.config.defaultGraffitiBytes():
+    return userGraffiti
+
+  # Otherwise, try to include EL version info
+  let elVersion = node.elManager.getClientVersion()
+  if elVersion.isSome:
+    makeGraffitiBytes(elVersion.get)
+  else:
+    # EL version not available yet, use default (CL-only)
+    userGraffiti
 
 proc isSynced*(node: BeaconNode, head: BlockRef): bool =
   ## TODO This function is here as a placeholder for some better heurestics to
