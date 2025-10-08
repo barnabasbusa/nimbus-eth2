@@ -828,8 +828,18 @@ func init*(T: type GraffitiBytes, input: string): GraffitiBytes
     distinctBase(result)[0 ..< input.len] = toBytes(input)
 
 func defaultGraffitiBytes*(): GraffitiBytes =
-  const graffitiBytes =
-    toBytes("Nimbus/" & fullVersionStr)
+  # Encode client version in graffiti following the standard from:
+  # https://hackmd.io/@wmoBhF17RAOH2NZ5bNXJVg/BJX2c9gja
+  # Format: CLcode|2bytecommit (we don't include EL since Nimbus is CL-only)
+  # Example: NB1be5 (NB = Nimbus, 1be5 = first 4 hex chars of git commit)
+  const
+    clientCode = "NB"  # Nimbus consensus layer code
+    # Extract first 4 hex characters of git revision (2 bytes)
+    commitShort = gitRevision[0..3]
+    versionGraffiti = clientCode & commitShort
+    # Append remaining space with readable version info
+    fullGraffiti = versionGraffiti & " " & "Nimbus/" & fullVersionStr
+    graffitiBytes = toBytes(fullGraffiti)
   static: doAssert graffitiBytes.len <= MAX_GRAFFITI_SIZE
   distinctBase(result)[0 ..< graffitiBytes.len] = graffitiBytes
 
